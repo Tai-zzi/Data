@@ -15,6 +15,8 @@
 //   M      모니터(GPIO14 = DAC 출력 전압) 읽기
 //   S      즉시 0 (언제든)
 //   ?      설정/단계표 출력
+//   R      1->5단계 자동 증가 (단계마다 2초 출력 + 1초 쉼), GPIO8/9 로 실제 전류 측정. 측정선 없으면 취소
+//   V      지금 전압/전류 측정만
 // 출력은 어떤 경우에도 HOLD_MS(최대 3초) 뒤 자동으로 0이 된다.
 #include <Wire.h>
 
@@ -23,6 +25,12 @@ constexpr float R1 = 10000.0f, R2 = 11000.0f, RS = 1000.0f;   // I = Vin * R2 / 
 constexpr float DAC_VDD = 3.3f;                                 // MCP4725 VDD (3V3)
 constexpr int PIN_A = 1, PIN_B = 2;                             // MCP4725 I2C (SDA/SCL 자동 판별)
 constexpr int PIN_MON = 14;                                     // VOUT 모니터 (ADC)
+// 전류 측정선 (멀티미터 대신): 각 지점 -> 10k -> GPIO, GPIO -> 10k -> GND  (전압 1/2로 나눠 읽음)
+constexpr int PIN_VL = 8;                                       // J/44 부하 위쪽 전압
+constexpr int PIN_VO = 9;                                       // J/30 op-amp 출력 전압
+constexpr float DIV = 2.0f;                                     // 10k/10k 분압
+constexpr float RF = 1000.0f, R4 = 10000.0f, R_BLEED = 100000.0f, R_DIVSUM = 20000.0f;
+constexpr float SAT_V = 4.6f;                                   // op-amp 출력이 이보다 크면 전압 부족(포화)
 
 // ---- 단계표 (mA). 상한은 펌웨어에 고정. PC가 바꿀 수 없음 ----
 constexpr int N_LEVEL = 5;
@@ -33,6 +41,8 @@ constexpr uint32_t HOLD_MS = 3000;     // 직류 유지 최대 시간
 constexpr uint32_t PULSE_US = 300;     // 펄스 폭
 constexpr uint32_t PULSE_HZ = 50;      // 펄스 반복
 constexpr uint32_t BURST_MS = 1000;    // 펄스열 길이
+
+struct Meas { float vo, vl, i_total_ma, i_lead_ma; bool sat; };   // 함수보다 위에 (Arduino 자동 선언 함정)
 
 uint8_t dacAddr = 0;
 int pinSda = -1, pinScl = -1;
@@ -105,6 +115,72 @@ int monitorMv() {
   return (int)(s / 16);
 }
 
+int readMv(int pin) {
+  long s = 0;
+  for (int i = 0; i < 32; i++) s += analogReadMilliVolts(pin);
+  return (int)(s / 32);
+}
+
+// 측정선이 꽂혔는지: 내부 풀업을 켜도 10k(GND) 때문에 낮게 읽히면 연결됨, 3V 근처면 떠 있음(미연결)
+bool senseWired(int pin) {
+  pinMode(pin, INPUT_PULLUP);
+  delay(5);
+  int mv = analogReadMilliVolts(pin);
+  pinMode(pin, INPUT);
+  delay(5);
+  return mv < 1500;
+}
+
+// I_load = (O-L)/Rs - (L-P)/R4,  L = VL + I*Rf,  P = N = O*R1/(R1+R2)
+Meas measure() {
+  Meas m;
+  m.vo = readMv(PIN_VO) * DIV / 1000.0f;
+  m.vl = readMv(PIN_VL) * DIV / 1000.0f;
+  float p = m.vo * R1 / (R1 + R2);
+  float i = (m.vo / RS - m.vl / RS - m.vl / R4 + p / R4) / (1.0f + RF / RS + RF / R4);   // A
+  m.i_total_ma = i * 1000.0f;
+  m.i_lead_ma = (i - m.vl / R_BLEED - m.vl / R_DIVSUM) * 1000.0f;      // 100k, 측정 분압으로 새는 전류 제외
+  m.sat = m.vo > SAT_V;
+  return m;
+}
+
+void printMeas(const char* tag, const Meas& m, float target) {
+  Serial.printf("%s opamp_out=%.2f V load_V=%.3f V I_total=%.3f mA I_lead=%.3f mA (target %.2f) R_load=%s%s\n",
+                tag, m.vo, m.vl, m.i_total_ma, m.i_lead_ma, target,
+                m.i_lead_ma > 0.02f ? String(m.vl / (m.i_lead_ma / 1000.0f), 0).c_str() : "-",
+                m.sat ? "  SAT(5V 전압 부족)" : "");
+}
+
+void doRamp() {
+  bool wl = senseWired(PIN_VL), wo = senseWired(PIN_VO);
+  Serial.printf("WIRE GPIO%d(J/44)=%s GPIO%d(J/30)=%s\n", PIN_VL, wl ? "OK" : "NOT CONNECTED", PIN_VO,
+                wo ? "OK" : "NOT CONNECTED");
+  if (!wl || !wo) { Serial.println("ERR measurement wires missing -> ramp cancelled"); return; }
+  printMeas("IDLE", measure(), 0);
+  for (int n = 1; n <= N_LEVEL; n++) {
+    uint16_t c = codeFor(LEVEL_MA[n]);
+    if (!dacFast(c)) { Serial.println("ERR i2c"); break; }
+    uint32_t t0 = millis();
+    bool stop = false;
+    while (millis() - t0 < 300) if (stopRequested()) stop = true;
+    Meas a = measure();
+    while (millis() - t0 < 2000) if (stopRequested()) stop = true;
+    Meas b = measure();
+    dacFast(0);
+    char tag[24];
+    snprintf(tag, sizeof(tag), "RAMP L%d @0.3s", n); printMeas(tag, a, LEVEL_MA[n]);
+    snprintf(tag, sizeof(tag), "RAMP L%d @2.0s", n); printMeas(tag, b, LEVEL_MA[n]);
+    if (a.i_lead_ma > 0.05f && b.i_lead_ma < 0.5f * a.i_lead_ma)
+      Serial.println("  NOTE current decays over time -> series capacitor (G/40-G/44) is blocking DC (normal)");
+    if (stop) { Serial.println("STOPPED by S"); break; }
+    uint32_t t1 = millis();
+    while (millis() - t1 < 1000) if (stopRequested()) { stop = true; break; }
+    if (stop) { Serial.println("STOPPED by S"); break; }
+  }
+  outZero();
+  printMeas("END", measure(), 0);
+}
+
 void printTable() {
   Serial.printf("CFG R1=%.0f R2=%.0f RS=%.0f DAC_VDD=%.2f gain=%.3f mA/V max=%.2f mA hold=%lu ms pulse=%lu us %lu Hz %lu ms\n",
                 R1, R2, RS, DAC_VDD, R2 / (R1 * RS) * 1000.0f, MAX_MA, (unsigned long)HOLD_MS,
@@ -156,6 +232,8 @@ void handle(String s) {
   if (cmd == 'S') { outZero(); Serial.println("OK S (0 V)"); return; }
   if (cmd == 'M') { Serial.printf("OK M mon=%d mV code=%u\n", monitorMv(), curCode); return; }
   if (cmd == '?') { printTable(); return; }
+  if (cmd == 'R') { doRamp(); return; }
+  if (cmd == 'V') { printMeas("MEAS", measure(), LEVEL_MA[0]); return; }
   if ((cmd == 'L' || cmd == 'P') && (n < 1 || n > N_LEVEL)) { Serial.printf("ERR level 1..%d\n", N_LEVEL); return; }
   if (cmd == 'L') { doHold(n); return; }
   if (cmd == 'P') { doPulse(n); return; }

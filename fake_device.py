@@ -41,8 +41,11 @@ class FakeLink:
             self._made += 1
             emg2, aud = r                                # (50,2): [EEG, EMG] µV
             counts = np.zeros((len(emg2), 2), np.int64)
-            counts[:, C.CH_EEG] = np.round(emg2[:, 0] / uv_per_count(C.ADS_GAIN_EEG))
-            counts[:, C.CH_EMG] = np.round(emg2[:, 1] / uv_per_count(C.ADS_GAIN_EMG))
+            if C.CH_EEG == C.CH_EMG:                      # 전극 한 쌍: 뇌파와 근전도가 한 채널에 섞여 들어옴
+                counts[:, C.CH_EMG] = np.round((emg2[:, 0] + emg2[:, 1]) / uv_per_count(C.ADS_GAIN_EMG))
+            else:
+                counts[:, C.CH_EEG] = np.round(emg2[:, 0] / uv_per_count(C.ADS_GAIN_EEG))
+                counts[:, C.CH_EMG] = np.round(emg2[:, 1] / uv_per_count(C.ADS_GAIN_EMG))
             counts = np.clip(counts, -2 ** 23, 2 ** 23 - 1)
             a16 = (np.clip(np.round(aud * 32768), -32768, 32767).astype(np.int16)
                    if self.with_audio else np.zeros(0, np.int16))

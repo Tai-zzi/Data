@@ -165,11 +165,17 @@ class StimController:
         return self.pulse_level if self.state == "pulse" else 0
 
 
-def classify_epoch(x, fs):
-    """30초 EEG -> 수면 단계. 대역 파워 비율 규칙: 알파↑=각성, 델타↑=깊은 수면, 베타↑=REM, 나머지=얕은 수면."""
+def classify_epoch(x, fs, low_only=False):
+    """30초 EEG -> 수면 단계. 대역 파워 비율 규칙: 알파↑=각성, 델타↑=깊은 수면, 베타↑=REM, 나머지=얕은 수면.
+    low_only=True: 근전도가 섞인 에폭용. 근전도에 덮이는 베타를 빼고 0.5~15 Hz 안의 비율로만 각성/깊은/얕은 판정 (REM 판정 안 함)."""
     f, p = welch(x, fs, nperseg=int(4 * fs))
-    tot = p[(f >= 0.5) & (f < 30)].sum()
+    tot = p[(f >= 0.5) & (f < (15 if low_only else 30))].sum()
     rel = {k: p[(f >= lo) & (f < hi)].sum() / tot for k, (lo, hi) in C.BANDS.items()}
+    if low_only:
+        rel["beta"] = float("nan")
+        if rel["alpha"] > C.WAKE_ALPHA_REL:
+            return STAGE_W, rel
+        return (STAGE_D if rel["delta"] > C.DEEP_DELTA_REL else STAGE_L), rel
     if rel["alpha"] > C.WAKE_ALPHA_REL:
         return STAGE_W, rel
     if rel["delta"] > C.DEEP_DELTA_REL:
@@ -183,7 +189,8 @@ class StreamProcessor:
     def __init__(self, stimulator=None, capacity_hours=10):
         fs, afs = C.EMG_FS, C.AUDIO_FS
         self.f_eeg = CausalFilter(butter(2, C.EEG_BAND, "bandpass", fs=fs, output="sos"))
-        self.f_emg = CausalFilter(butter(4, C.EMG_BAND, "bandpass", fs=fs, output="sos"))
+        band = C.EMG_BAND_SHARED if C.SINGLE_CHANNEL else C.EMG_BAND     # 한 채널 공유면 뇌파 대역과 겹치지 않게
+        self.f_emg = CausalFilter(butter(4, band, "bandpass", fs=fs, output="sos"))
         self.f_notch = CausalFilter(mains_notch_sos(fs, C.EMG_BAND[1]))      # 60Hz + 배수
         self.f_aud = CausalFilter(butter(4, C.AUDIO_BAND, "bandpass", fs=afs, output="sos"))
         self.env_emg = WindowRMS(int(round(C.EMG_WIN_S / HOP_S)))
@@ -203,8 +210,10 @@ class StreamProcessor:
         self.snore_flag = np.zeros(cap, bool)
         self.stim_level = np.zeros(cap, np.int8)
         self.stage_t, self.stage_v = [], []        # 에폭 시작 시각(초), 단계
+        self.stage_artifact = []                   # True = 근전도가 많아 판정 불가(직전 단계 유지)
         self._eeg_chunks, self._eeg_n, self._epoch_i = [], 0, 0
         self.grind_events, self.snore_episodes = [], []
+        self.grind_onsets = []                     # (확정 시각, 시작 시각): 이갈이가 '지금' 확정된 순간 (자극 요청 판단용)
         self._g_start = self._s_start = 0.0
 
     @property
@@ -237,6 +246,7 @@ class StreamProcessor:
             self.emg_flag[int(round(g_start / HOP_S)):i + 1] = True
         if g_start is not None:
             self._g_start = g_start
+            self.grind_onsets.append((t, g_start))
         if g_end is not None:
             self.grind_events.append((self._g_start, g_end))
         s_on, s_retro = self.snore.step(t, env_a)
@@ -259,6 +269,19 @@ class StreamProcessor:
             ep, rest = x[:n_ep], x[n_ep:]
             self._eeg_chunks, self._eeg_n = [rest], len(rest)
             stage, _ = classify_epoch(ep, C.EMG_FS)
+            # 전극 한 쌍으로 뇌파+근전도를 같이 보면, 이를 가는 동안 근전도(20~35 Hz)가 뇌파의 베타 대역을 덮는다.
+            # 그런 에폭은 베타를 빼고 저주파(0.5~15 Hz)만으로 판정한다 (REM은 판정 안 함, stage_artifact=True로 표시).
+            a = int(round(self._epoch_i * C.EPOCH_S / HOP_S))
+            b = min(int(round((self._epoch_i + 1) * C.EPOCH_S / HOP_S)), self.n)
+            frac = float(self.emg_flag[a:b].mean()) if b > a else 0.0
+            bad = frac > C.EPOCH_EMG_MAX_FRAC
+            if bad:
+                stage, _ = classify_epoch(ep, C.EMG_FS, low_only=True)
             self.stage_t.append(self._epoch_i * C.EPOCH_S)
             self.stage_v.append(stage)
+            self.stage_artifact.append(bad)
             self._epoch_i += 1
+
+    def current_stage(self):
+        """가장 최근 에폭의 수면 단계 (아직 없으면 None)"""
+        return self.stage_v[-1] if self.stage_v else None

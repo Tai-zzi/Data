@@ -24,7 +24,7 @@ import time
 import numpy as np
 
 import config as C
-from stream import HOP_S, StreamProcessor
+from stream import HOP_S, STAGE_LABEL, StreamProcessor
 
 APNEA_MIN, APNEA_MAX = 10.0, 60.0       # 코골이 사이 무음이 이 범위면 '무호흡 의심'(비진단)
 SNORE_END_EST = 1.5                      # 마지막 호흡 소리 시작 + 약 1.5초를 코골이 끝으로 추정
@@ -50,10 +50,11 @@ def hms(sec):
 
 class Stats:
     """감지된 사건 목록과 events.csv 기록."""
-    def __init__(self, out):
+    def __init__(self, out, marker=None):
         self.t0 = time.time()
         self.grind, self.snore, self.apnea = [], [], []
-        self.g_idx = self.s_idx = 0
+        self.g_idx = self.s_idx = self.o_idx = 0
+        self.marker = marker
         self.prev_snore_end = None
         self.f = open(os.path.join(out, "events.csv"), "w", newline="", encoding="utf-8-sig")
         self.w = csv.writer(self.f)
@@ -66,6 +67,15 @@ class Stats:
         print(f"[{hms(e)}] {kind} {e - s:.1f}초 {note}", flush=True)
 
     def poll(self, proc):
+        while self.o_idx < len(proc.grind_onsets):                 # 이갈이가 방금 확정됨 -> 자극 요청 마커 판단
+            t, g0 = proc.grind_onsets[self.o_idx]
+            self.o_idx += 1
+            if self.marker is None:
+                continue
+            n = proc.n
+            sat = bool(n and float(np.median(proc.emg_env[max(0, n - 1200):n])) > C.EMG_SATURATION_UV)
+            if self.marker.request(t, proc.current_stage(), quality_ok=not sat, info={"이갈이_시작": hms(g0)}):
+                self.add("자극 요청 마커(실제 출력 없음)", t, t, f"수면 {STAGE_LABEL.get(proc.current_stage(), '판정 전')}")
         while self.g_idx < len(proc.grind_events):
             s, e = proc.grind_events[self.g_idx]
             self.g_idx += 1
@@ -105,7 +115,11 @@ def write_summary(out, proc, st, stats, args, started, final):
                 코골이_비율_퍼센트=round(100 * s_sec / dur, 1) if dur > 0 else None,
                 무호흡_의심_구간수=len(st.apnea),
                 무호흡_의심_최장_초=round(max([e - s for s, e in st.apnea], default=0), 1),
-                수신=stats, 가짜데이터=bool(args.fake))
+                수면_단계_분={STAGE_LABEL[k]: round(proc.stage_v.count(k) * C.EPOCH_S / 60, 1)
+                           for k in sorted(STAGE_LABEL, reverse=True)},
+                수면_판정불가_에폭=int(sum(proc.stage_artifact)), 수면_에폭=len(proc.stage_v),
+                자극_요청_마커=st.marker.summary() if st.marker else None,
+                한채널_공유=bool(C.SINGLE_CHANNEL), 수신=stats, 가짜데이터=bool(args.fake))
     with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
     rows = []
@@ -129,6 +143,16 @@ def write_summary(out, proc, st, stats, args, started, final):
 - 코골이 구간 {info['코골이_구간수']}개, 총 {info['코골이_총시간_분']}분 (측정 시간의 {info['코골이_비율_퍼센트']}%)
 - 무호흡 의심 구간(의료 진단 아님) {info['무호흡_의심_구간수']}개, 최장 {info['무호흡_의심_최장_초']}초
   (코골이가 끝난 뒤 {APNEA_MIN:.0f}~{APNEA_MAX:.0f}초 무음이 있다가 다시 코골이가 시작된 경우)
+
+## 수면 상태 (EEG 대역 파워 기반 추정, 의료용 판독 아님)
+- {' / '.join(f'{k} {v}분' for k, v in info['수면_단계_분'].items())}
+- 30초 에폭 {info['수면_에폭']}개 중 근전도가 섞여 저주파만으로 판정(REM 제외) {info['수면_판정불가_에폭']}개
+- 전극: {'한 쌍(이어클립 + 패치)으로 뇌파와 근전도를 같은 채널에서 주파수로 나눠 봄' if C.SINGLE_CHANNEL else f'EEG 열 {C.CH_EEG}, EMG 열 {C.CH_EMG}'}
+
+## 자극 요청 마커 (실제 자극 출력 없음, 기록만)
+- {st.marker.summary() if st.marker else '꺼짐'}
+- 조건: 시작 후 {st.marker.gate.cfg.warmup_min if st.marker else '-'}분 유예, 최소 {C.MARK_GAP_S:.0f}초 간격, 시간당 {C.MARK_MAX_PER_HOUR}회, 밤당 {C.MARK_MAX_PER_NIGHT}회, 신호 포화 시 보류{', 각성이면 보류' if C.MARK_SKIP_AWAKE else ''}
+- 모든 판단(마커/보류와 이유): stim_requests.csv
 
 ## 시간대별
 | 구간 | 이갈이 횟수 | 코골이 시간(분) | 무호흡 의심 |
@@ -202,6 +226,7 @@ class Plotter:
         for p in self.apnea_patches:
             p.remove()
         self.apnea_patches = [self.ax[1].axvspan(s / 60, e / 60, color="orange", alpha=0.35) for s, e in S["apnea"]]
+        self.apnea_patches += [self.ax[0].axvline(m / 60, color="tab:green", lw=1.5, ls=":") for m in S["marks"]]
         gy = len(S["grind_y"])
         self.cum_g.set_data(np.concatenate(([0.0], S["grind_t"], [now])), np.concatenate(([0], S["grind_y"], [gy])))
         self.cum_s.set_data(S["cum_t"], S["cum_snore"])
@@ -237,7 +262,10 @@ def make_snapshot(proc, st, window_s):
                 grind_t=ends, grind_y=np.arange(1, len(ends) + 1),
                 cum_t=idx * HOP_S / 60, cum_snore=np.cumsum(proc.snore_flag[:n])[idx] * HOP_S / 60,
                 emg_warn=bool(len(proc.emg_env[sl]) and float(np.median(proc.emg_env[sl])) > C.EMG_SATURATION_UV),
-                summary_text=f"이갈이 {len(st.grind)}회 | 코골이 {s_sec / 60:.1f}분 | 무호흡 의심 {len(st.apnea)}회(비진단)")
+                marks=list(st.marker.marks) if st.marker else [],
+                summary_text=f"이갈이 {len(st.grind)}회 | 코골이 {s_sec / 60:.1f}분 | 무호흡 의심 {len(st.apnea)}회(비진단)"
+                             f"\n수면(추정): {STAGE_LABEL.get(proc.current_stage(), '판정 전(30초마다)')}"
+                             f" | 자극 요청 마커 {len(st.marker.marks) if st.marker else 0}회(초록 점선, 출력 없음)")
 
 
 def setup_font(mpl):
@@ -264,6 +292,9 @@ def main():
     ap.add_argument("--no-gui", action="store_true", help="창 없이 저장만")
     ap.add_argument("--fake", action="store_true", help="가짜 ESP32로 코드 시험(창 없이 끝까지)")
     ap.add_argument("--out", default="collections")
+    ap.add_argument("--mark-warmup", type=float, default=None,
+                    help=f"자극 요청 마커 시작 유예(분, 기본 {C.MARK_WARMUP_MIN}). 시연 때 0.5 등으로 줄임")
+    ap.add_argument("--no-marker", action="store_true", help="자극 요청 마커 끔")
     args = ap.parse_args()
     if not args.fake and not args.port:
         raise SystemExit(__doc__)
@@ -275,7 +306,9 @@ def main():
     sys.stdout = Tee(os.path.join(out, "run_log.txt"))
     sys.stderr = sys.stdout                                       # 오류(traceback)도 run_log.txt에 남긴다
     print(f"[시작] {started}  저장 폴더: {os.path.abspath(out)}")
-    print(f"[설정] 턱 EMG 열={C.CH_EMG}, 포트={'(가짜 ESP32)' if args.fake else args.port}, baud={args.baud}")
+    print(f"[설정] 턱 EMG 열={C.CH_EMG}, EEG 열={C.CH_EEG}{' (한 채널 공유: 이어클립 + 패치)' if C.SINGLE_CHANNEL else ''}, "
+          f"포트={'(가짜 ESP32)' if args.fake else args.port}, baud={args.baud}")
+    print("[설정] 자극: 실제 출력 없음. 이갈이 확정 시 안전 조건을 통과하면 '자극 요청 마커'만 기록 (stim_requests.csv)")
     print("[안내] 처음 10초는 조용히 계세요 (평소 잡음 학습). 전극을 몸에 붙이기 전에 아이솔레이터와 노트북 배터리를 확인했나요?")
 
     import matplotlib
@@ -293,8 +326,12 @@ def main():
         link = SerialLink(args.port, args.baud)
     src = SerialSource(link, logger)
     proc = StreamProcessor(capacity_hours=args.hours)
-    proc.stim.t_ready = 1e18                                      # 자극 판정/출력은 이 프로그램에서 꺼 둠
-    st = Stats(out)
+    proc.stim.t_ready = 1e18                                      # stream.py의 자극 제어(StimController)는 꺼 둠
+    marker = None
+    if not args.no_marker:
+        from stim_marker import StimMarker
+        marker = StimMarker(out, args.mark_warmup)
+    st = Stats(out, marker)
     lock, stop, state = threading.Lock(), threading.Event(), dict(done=False, first=True, last_save=time.time())
 
     def worker():
@@ -372,7 +409,9 @@ def main():
                 fig2.suptitle(f"측정 종료 | 총 {hms(proc.now)} | 이갈이 {len(st.grind)}회, 코골이 {info['코골이_총시간_분']}분", fontsize=12)
                 fig2.savefig(os.path.join(out, "screen_final.png"), dpi=110)
         print(f"\n=== 결과 요약 ===\n측정 {hms(proc.now)} | 이갈이 {info['이갈이_횟수']}회 | 코골이 {info['코골이_구간수']}구간 {info['코골이_총시간_분']}분 | 무호흡 의심 {info['무호흡_의심_구간수']}개(비진단)")
-        print(f"저장 폴더: {os.path.abspath(out)}\n  summary.md / events.csv / screen_final.png / run_log.txt / session/ (원본)")
+        print(f"수면(추정) {info['수면_단계_분']} | 판정 불가 에폭 {info['수면_판정불가_에폭']}/{info['수면_에폭']} | "
+              f"자극 요청 마커 {info['자극_요청_마커']}")
+        print(f"저장 폴더: {os.path.abspath(out)}\n  summary.md / events.csv / stim_requests.csv / screen_final.png / run_log.txt / session/ (원본)")
         st.f.close()
         try:                                                        # events.csv를 시간순으로 정렬해서 다시 저장
             p = os.path.join(out, "events.csv")
