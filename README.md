@@ -75,5 +75,6 @@ python collect.py COM4 --no-gui       # 창 없이 저장만 (밤샘 측정용)
 - 감지 기준은 기본값이고 실제 데이터로 아직 튜닝하지 않았습니다.
 <img width="1912" height="996" alt="제목 없음" src="https://github.com/user-attachments/assets/69814a17-d4f9-4119-8975-332b7f6b523e" />
 <img width="4640" height="2564" alt="설계도" src="https://github.com/user-attachments/assets/2fbabb46-4c2e-477a-ad14-9c251670f3e2" />
+<img width="1200" height="896" alt="Gemini_Generated_Image_1xnz5y1xnz5y1xnz" src="https://github.com/user-attachments/assets/8d30d883-b36d-48e0-993e-48a6eca69525" />
 
 - 
