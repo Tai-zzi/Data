@@ -63,7 +63,7 @@ def one(d, subject, data):
         write_audacity_labels(os.path.join(rec, base + ".txt"), [(s, e, norm_label(k)) for s, e, k in snore_rows])
         print(f"  소리 라벨 {len(snore_rows)}개 → {base}.txt")
     elif x is not None:
-        print("  ※ 소리 라벨 없음 → 학습에는 안 쓰이고 detect.py / live.py 시험용으로만 사용 가능")
+        print("  ※ 소리 라벨 없음 → 학습에는 안 쓰이고 detect.py 시험용으로만 사용 가능")
 
     emg_d = os.path.join(data, "emg")
     src = os.path.join(d, "emg.npy")

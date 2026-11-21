@@ -1,10 +1,10 @@
 # 코골티스 감지·자극 소프트웨어
 
-마이크 코골이 + 턱 근전도 이갈이 → 탐지 → 안전 게이트 → 단계별 진동 자극 → 효과 기록
+마이크 코골이 + 턱 근전도 이갈이 → 탐지 → 안전 게이트 → 트리거 기록
 
 ```
 소리(wav) → 전처리·정규화 → 분류(규칙/랜덤포레스트/CNN) → 3회 반복 = 코골이 확정 ┐
-근전도    → 필터·%MVC/배경 기준 → 위상성·긴장성 = 이갈이 확정 ──────────────┴→ 안전 게이트 → 자극 1~3단계 → ESP32 진동
+근전도    → 필터·%MVC/배경 기준 → 위상성·긴장성 = 이갈이 확정 ──────────────┴→ 안전 게이트 → 트리거
 ```
 
 ## 실제 데이터 결과 (Kaggle 공개 코골이 1,000개)
@@ -25,7 +25,6 @@
 | `01_data_collection.md` | 무엇을, 어떤 형식으로, 어떤 절차로 모으나 |
 | `02_preprocessing.md` | 소리·근전도 전처리, 상대 크기, RMS·MVC 정규화, 코골이 판단 기준 |
 | `03_algorithm_references.md` | 모델 3종, 이갈이 기준, 참고 문헌 |
-| `04_stimulation_software.md` | 안전 게이트, 단계별 자극 알고리즘, PC↔ESP32 규약, 진동 모터 배선 |
 | `05_data_import_guide.md` | **휴대폰 녹음 / 섞인 밤 녹음 / 장치 기록 / Kaggle / PhysioNet 넣는 법** |
 
 ## 전체 명령
@@ -49,10 +48,6 @@ python detect.py --wav 밤녹음.wav --model rf                 # 탐지 + 측�
 python brux_calibrate.py --guide --subject P01              # 보정 안내 (측정 시작 직후)
 python brux_calibrate.py --emg 세션/emg.npy --marks results/calib_P01_marks.csv --subject P01
 python brux_detect.py --emg 세션/emg.npy --calib results/brux_calib_P01.json
-
-# 실시간 + 자극
-python live.py --wav 밤녹음.wav --emg 세션/emg.npy --speed 0 --warmup 0   # 흐름 확인 (기록만)
-python live.py --mic --port COM5 --arm                                   # 실제 진동
 ```
 
 ## 데이터 폴더 구조
@@ -107,10 +102,8 @@ data/
 | `timeline_*.png`, `*_triggers.csv` | detect.py 탐지 타임라인(맨 아래 = 소리 종류), 트리거 기록 |
 | `timeline_*_summary.csv`, `*_sounds.csv` | 코골이 측정 요약, 소리 종류 구간 |
 | `brux_*.png`, `_summary.csv`, `_episodes.csv` | 이갈이 그림, 지표, 에피소드 |
-| `live_*_decisions.csv`, `_stim.csv` | 실시간 판단 기록, 자극 단계·효과 |
+| `live_*_decisions.csv` | 실시간 판단 기록 |
 
 ## 주의
 - `--demo` 데이터는 코드 확인용 합성 소리라 점수가 실제보다 높게 나옴. 성능은 실제 녹음으로 다시 측정할 것
-- 자극 출력은 진동 모터 기준. 기본은 기록만, `live.py --port COMx --arm` 일 때만 ESP32로 전송
-- 자작 전기 자극 회로(변압기 개조 등)는 지원하지 않음. 전기 자극은 인증 기기 + 안전 검토 후 (`docs/04`)
-- `firmware/trigger_receiver.ino` 는 컴파일 확인 전 코드
+- 자작 전기 자극 회로(변압기 개조 등)는 지원하지 않음. 전기 자극은 인증 기기 + 안전 검토 후

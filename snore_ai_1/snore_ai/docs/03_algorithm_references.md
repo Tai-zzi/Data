@@ -30,28 +30,24 @@
    → 주변 소리에서 코골이/비코골이 분류, MFCC 사용
 3. Nakano H, Hirayama K, Sadamitsu Y, et al. *Monitoring sound to quantify snoring and sleep apnea severity using a smartphone: proof of concept.* J Clin Sleep Med 10(1):73–78, 2014. (PMC3869073)
    → 스마트폰 마이크만으로 코골이 정량화 → 휴대폰 녹음 수집의 근거
-4. Khan T. *A deep learning model for snoring detection and vibration notification using a smart wearable gadget.* Electronics 8(9):987, 2019. doi:10.3390/electronics8090987
-   → **코골이 CNN 탐지 → 웨어러블 진동 알림**. 우리 "탐지 → 트리거" 흐름과 가장 가까운 사례
-5. Schuller B, et al. *The INTERSPEECH 2017 Computational Paralinguistics Challenge: Addressee, Cold & Snoring.* Interspeech 2017. (Munich-Passau Snore Sound Corpus)
+4. Schuller B, et al. *The INTERSPEECH 2017 Computational Paralinguistics Challenge: Addressee, Cold & Snoring.* Interspeech 2017. (Munich-Passau Snore Sound Corpus)
    → 공개 코골이 데이터셋, 데이터 늘릴 때 후보
-6. Kong Q, et al. *PANNs: Large-scale pretrained audio neural networks for audio pattern recognition.* IEEE/ACM TASLP 28, 2020.
+5. Kong Q, et al. *PANNs: Large-scale pretrained audio neural networks for audio pattern recognition.* IEEE/ACM TASLP 28, 2020.
    → 로그 멜 + CNN 구조, 데이터가 늘면 사전학습 모델로 확장 가능
 
 **이갈이 · 근전도**
 
-7. Lavigne GJ, Rompré PH, Montplaisir JY. *Sleep bruxism: validity of clinical research diagnostic criteria in a controlled polysomnographic study.* J Dent Res 75(1):546–552, 1996. (PubMed 8655758)
+6. Lavigne GJ, Rompré PH, Montplaisir JY. *Sleep bruxism: validity of clinical research diagnostic criteria in a controlled polysomnographic study.* J Dent Res 75(1):546–552, 1996. (PubMed 8655758)
    → 위상성/긴장성 에피소드 기준의 출처
-8. Lobbezoo F, Ahlberg J, Raphael KG, et al. *International consensus on the assessment of bruxism: Report of a work in progress.* J Oral Rehabil 45(11):837–844, 2018. (PMC6287494)
+7. Lobbezoo F, Ahlberg J, Raphael KG, et al. *International consensus on the assessment of bruxism: Report of a work in progress.* J Oral Rehabil 45(11):837–844, 2018. (PMC6287494)
    → 이갈이 평가 등급(자가보고 / 임상 / 기기 측정) 정리
-9. Hermens HJ, et al. *Development of recommendations for SEMG sensors and sensor placement procedures (SENIAM).* J Electromyogr Kinesiol 10(5):361–374, 2000.
+8. Hermens HJ, et al. *Development of recommendations for SEMG sensors and sensor placement procedures (SENIAM).* J Electromyogr Kinesiol 10(5):361–374, 2000.
    → 표면 근전도 필터 대역·전극 배치 권고
 
 **탐지 후 피드백(자극) 연구**
 
-10. Raphael KG, Janal MN, Sirois DA, Svensson P, et al. *Effect of contingent electrical stimulation on masticatory muscle activity and pain in patients with a myofascial temporomandibular disorder and sleep bruxism.* J Orofac Pain 27(1):21–31, 2013. (PubMed 23424717)
+9. Raphael KG, Janal MN, Sirois DA, Svensson P, et al. *Effect of contingent electrical stimulation on masticatory muscle activity and pain in patients with a myofascial temporomandibular disorder and sleep bruxism.* J Orofac Pain 27(1):21–31, 2013. (PubMed 23424717)
     → 근전도로 이갈이를 감지할 때만 자극(contingent). **승인된 기기·임상 연구 환경**에서 수행
-11. Jadidi F, et al. 수면 중 contingent electrical stimulation 파일럿 무작위 대조 연구. Acta Odontol Scand, 2013. doi:10.3109/00016357.2012.741702
-12. Eijsvogel MM, et al. *Sleep position trainer versus tennis ball technique in positional obstructive sleep apnea syndrome.* J Clin Sleep Med 11(2):139–147, 2015. (PMC4298771)
-    → 전기가 아닌 **진동 피드백**으로 수면 자세를 바꾸는 사례 → 코골이 쪽 대안
+10. Jadidi F, et al. 수면 중 contingent electrical stimulation 파일럿 무작위 대조 연구. Acta Odontol Scand, 2013. doi:10.3109/00016357.2012.741702
 
 > 발표할 때: "우리 점수는 합성 데이터 기준이며, 실제 녹음으로 다시 측정할 예정"이라고 꼭 밝히기.
