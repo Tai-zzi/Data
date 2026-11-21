@@ -21,12 +21,19 @@ def find_events(env, fs_env, thr, min_dur, merge_gap):
     return [(s, e) for s, e in merged if e - s >= min_dur]
 
 
+def mains_notch_sos(fs, f_max=None):
+    """전원 잡음 60Hz와 그 배수(120, 180, ...)를 모두 깎는 노치 필터 묶음 (sos).
+    실측(2026-11-16): 60Hz만 깎으면 배수 잡음에 묻혀 이를 물어도 1.3배, 배수까지 깎으면 5배 이상 차이."""
+    top = min(f_max or fs / 2, fs / 2) - 5
+    return np.vstack([tf2sos(*iirnotch(C.MAINS_HZ * k, Q=30, fs=fs))
+                      for k in range(1, int(top // C.MAINS_HZ) + 1)])
+
+
 def emg_envelope(x, fs=C.EMG_FS):
     x = np.asarray(x, dtype=np.float64)
     sos = butter(4, C.EMG_BAND, "bandpass", fs=fs, output="sos")
     x = sosfiltfilt(sos, x)
-    b, a = iirnotch(C.MAINS_HZ, Q=30, fs=fs)
-    x = sosfiltfilt(tf2sos(b, a), x)
+    x = sosfiltfilt(mains_notch_sos(fs, C.EMG_BAND[1]), x)
     win = max(1, int(C.EMG_WIN_S * fs))
     return np.sqrt(uniform_filter1d(x ** 2, win, mode="nearest"))   # 이동 RMS
 

@@ -6,6 +6,7 @@ import numpy as np
 from scipy.signal import butter, iirnotch, sosfilt, sosfilt_zi, tf2sos, welch
 
 import config as C
+from detect import mains_notch_sos
 
 HOP_S = C.AUDIO_HOP_S                       # 0.05 s -> 특징은 20Hz로 계산
 EMG_HOP = int(round(C.EMG_FS * HOP_S))      # 홉당 EMG 샘플 수
@@ -76,17 +77,19 @@ class RunDetector:
 
 
 class SnoreDetector:
-    """코골이 = '일정한 간격으로 반복되는 호흡 소리'. 소리 시작 간격이 SNORE_INTERVAL 안에 있는 것이
-    연속으로 SNORE_MIN_INTERVALS번 이어지면(예: 2번 = 소리 3번) 코골이 상태 ON,
-    마지막 소리 후 SNORE_HOLD_S 동안 없으면 OFF. (한두 번 난 소리가 우연히 규칙적인 경우를 걸러내기 위함)"""
+    """코골이 판정 (둘 중 하나면 ON):
+     1) 규칙 반복: 소리 시작 간격이 SNORE_INTERVAL 안에 있는 것이 연속으로 SNORE_MIN_INTERVALS번 이어짐
+        (예: 2번 = 소리 3번. 한두 번 난 소리가 우연히 규칙적인 경우를 걸러냄)
+     2) 긴 소리: 큰 저주파 소리가 SNORE_SUSTAIN_S 이상 끊기지 않고 이어짐 (계속 드르르륵)
+    마지막 코골이 소리 후 SNORE_HOLD_S 동안 없으면 OFF."""
     def __init__(self):
         self.pulse = RunDetector(C.SNORE_RATIO, C.SNORE_PULSE_MIN, 0.3)
-        self.on, self.last_onset, self.thr = False, None, np.nan
+        self.on, self.last_onset, self.last_seen, self.thr = False, None, None, np.nan
         self.chain, self.chain_start = 0, None
 
     def step(self, t, v):
         """반환: (코골이 상태, 이번에 ON으로 바뀌며 소급 표시할 시작시각 or None)"""
-        _, onset, _ = self.pulse.step(t, v)
+        active, onset, _ = self.pulse.step(t, v)
         self.thr = self.pulse.thr
         retro = None
         if onset is not None:
@@ -95,12 +98,19 @@ class SnoreDetector:
                 if self.chain == 0:
                     self.chain_start = self.last_onset
                 self.chain += 1
-                if not self.on and self.chain >= C.SNORE_MIN_INTERVALS:
+                if not self.on and self.chain >= C.SNORE_MIN_INTERVALS:   # 1) 규칙 반복
                     self.on, retro = True, self.chain_start
             else:
                 self.chain = 0
             self.last_onset = onset
-        if self.on and t - self.last_onset > C.SNORE_HOLD_S:
+            if self.on:
+                self.last_seen = onset
+        if active and self.pulse.cand is not None and t - self.pulse.cand >= C.SNORE_SUSTAIN_S:
+            if not self.on:                                  # 2) 긴 소리
+                self.on, retro = True, self.pulse.cand
+        if self.on and active:
+            self.last_seen = t
+        if self.on and t - self.last_seen > C.SNORE_HOLD_S:
             self.on, self.chain = False, 0
         return self.on, retro
 
@@ -174,7 +184,7 @@ class StreamProcessor:
         fs, afs = C.EMG_FS, C.AUDIO_FS
         self.f_eeg = CausalFilter(butter(2, C.EEG_BAND, "bandpass", fs=fs, output="sos"))
         self.f_emg = CausalFilter(butter(4, C.EMG_BAND, "bandpass", fs=fs, output="sos"))
-        self.f_notch = CausalFilter(tf2sos(*iirnotch(C.MAINS_HZ, Q=30, fs=fs)))
+        self.f_notch = CausalFilter(mains_notch_sos(fs, C.EMG_BAND[1]))      # 60Hz + 배수
         self.f_aud = CausalFilter(butter(4, C.AUDIO_BAND, "bandpass", fs=afs, output="sos"))
         self.env_emg = WindowRMS(int(round(C.EMG_WIN_S / HOP_S)))
         self.env_aud = WindowRMS(int(round(C.AUDIO_FRAME_S / HOP_S)))

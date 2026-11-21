@@ -20,6 +20,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, iirnotch, sosfiltfilt, tf2sos
 
 import config as C
+from detect import mains_notch_sos
 from packet import PacketParser
 from serial_source import uv_per_count
 
@@ -35,8 +36,7 @@ def column_gain(col):
 def filtered(x_uv, fs):
     sos = butter(4, [20, min(450, fs / 2 - 5)], "bandpass", fs=fs, output="sos")
     y = sosfiltfilt(sos, x_uv)
-    b, a = iirnotch(C.MAINS_HZ, Q=30, fs=fs)
-    return sosfiltfilt(tf2sos(b, a), y)
+    return sosfiltfilt(mains_notch_sos(fs, 450), y)       # 60Hz + 배수 (60Hz만 깎으면 배수 잡음에 묻힘)
 
 
 def envelope(x_uv, fs):
