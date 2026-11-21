@@ -73,3 +73,7 @@ python collect.py COM4 --no-gui       # 창 없이 저장만 (밤샘 측정용)
 - 이 프로젝트는 **연구용 비의료 시제품**이며 의료 진단이나 치료 효과를 주장하지 않습니다.
 - 무호흡 의심 구간은 코골이 뒤 10~60초 무음 뒤 재개를 표시하는 단순 규칙이며 **진단이 아닙니다.**
 - 감지 기준은 기본값이고 실제 데이터로 아직 튜닝하지 않았습니다.
+<img width="1912" height="996" alt="제목 없음" src="https://github.com/user-attachments/assets/69814a17-d4f9-4119-8975-332b7f6b523e" />
+<img width="4640" height="2564" alt="설계도" src="https://github.com/user-attachments/assets/2fbabb46-4c2e-477a-ad14-9c251670f3e2" />
+
+- 
